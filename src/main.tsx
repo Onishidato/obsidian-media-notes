@@ -4,6 +4,7 @@ import { AppProvider } from "./app-context";
 import {
 	App,
 	Editor,
+	MarkdownPostProcessorContext,
 	MarkdownView,
 	Plugin,
 	PluginSettingTab,
@@ -169,9 +170,22 @@ export default class MediaNotesPlugin extends Plugin {
 			// name is important - matches data-player-id in getActiveViewYoutubePlayer
 			div.dataset.playerId = uniqueId;
 			div.style.background = this.settings.backgroundColor;
-			const markdownSourceview = container.querySelector(
-				".markdown-source-view"
-			);
+			
+			// Get the appropriate parent element based on current view mode
+			const viewMode = markdownView.getMode();
+			const isEditMode = viewMode === "source";
+			const isReadMode = viewMode === "preview";
+			
+			let parentElement = null;
+			if (isEditMode) {
+				parentElement = container.querySelector(".markdown-source-view");
+			} else if (isReadMode) {
+				// For read mode, check for the markdown-reading-view
+				parentElement = container.querySelector(".markdown-reading-view");
+			}
+			
+			if (!parentElement) return;
+			
 			if (this.settings.defaultSplitMode === "Vertical") {
 				div.style.width = this.settings.horizontalPlayerWidth + "%";
 				container.classList.add(mediaParentContainerVerticalClass);
@@ -180,8 +194,8 @@ export default class MediaNotesPlugin extends Plugin {
 				div.style.height = this.settings.verticalPlayerHeight + "%";
 			}
 
-			if (!markdownSourceview) return;
-			markdownSourceview.prepend(div);
+			// Insert at the beginning of the parent element
+			parentElement.prepend(div);
 
 			const mediaLink = getMediaLinkFromFrontmatter(frontmatter);
 			const ytRef = React.createRef<YouTube>();
@@ -504,23 +518,37 @@ export default class MediaNotesPlugin extends Plugin {
 			})
 		);
 
-		// TODO: this doesn't work yet, its for Reading mode
-		// this.registerMarkdownPostProcessor(
-		// 	(el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
-		// 		el.querySelectorAll(".external-link").forEach(
-		// 			(link: HTMLAnchorElement) => {
-		// 				link.addEventListener("click", (event: MouseEvent) => {
-		// 					event.preventDefault();
-		// 					// Your custom logic here
-		// 					console.log(
-		// 						"Intercepted cm-link click:",
-		// 						link.href
-		// 					);
-		// 				});
-		// 			}
-		// 		);
-		// 	}
-		// );
+		 // Register a markdown post processor for read mode
+		this.registerMarkdownPostProcessor(
+			(el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
+				// Render the player in read mode if needed
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (view && view.getMode() === "preview") {
+					// Only process if we don't already have a player
+					const existingPlayer = view.containerEl.querySelector(
+						"." + mediaNotesContainerClass
+					);
+					if (!existingPlayer) {
+						this.renderPlayerInView(view);
+					}
+				}
+
+				// Add click event listeners to timestamp links in read mode
+				el.querySelectorAll("a.external-link").forEach((link) => {
+					const linkText = link.textContent;
+					const timestampRegex = /^(\d+:)?[0-5]?\d:[0-5]\d$/;
+					if (linkText && timestampRegex.test(linkText)) {
+						link.addEventListener("click", (event) => {
+							const isHandled = this.handleTimestampClick(linkText);
+							if (isHandled) {
+								event.preventDefault();
+								event.stopPropagation();
+							}
+						});
+					}
+				});
+			}
+		);
 	}
 
 	onunload() {
