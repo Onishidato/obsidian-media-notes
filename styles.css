@@ -38,8 +38,15 @@ If your plugin does not need CSS, delete this file.
 	}
 }
 
+/* Edit mode vertical layout */
 .media-container-parent-vertical .markdown-source-view {
 	flex-direction: row !important;
+}
+
+/* Read mode vertical layout */
+.media-container-parent-vertical .markdown-reading-view {
+	flex-direction: row !important;
+	display: flex !important;
 }
 
 .media-container-parent-vertical .media-notes-container {
@@ -69,6 +76,14 @@ If your plugin does not need CSS, delete this file.
 	height: 3px;
 	background-color: rgba(255, 255, 255, 0.1);
 }
+
+/* Make sure the player is visible in both modes */
+.markdown-reading-view .media-notes-container,
+.markdown-source-view .media-notes-container {
+	display: block !important;
+	z-index: 1;
+}
+
 .timestamp {
 	position: absolute;
 	bottom: 7px;

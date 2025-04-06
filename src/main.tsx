@@ -5,6 +5,7 @@ import {
 	App,
 	Editor,
 	MarkdownPostProcessorContext,
+	MarkdownRenderChild,
 	MarkdownView,
 	Plugin,
 	PluginSettingTab,
@@ -529,7 +530,14 @@ export default class MediaNotesPlugin extends Plugin {
 						"." + mediaNotesContainerClass
 					);
 					if (!existingPlayer) {
-						this.renderPlayerInView(view);
+						const file = view.file;
+						if (file) {
+							const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+							const mediaLink = getMediaLinkFromFrontmatter(frontmatter);
+							if (mediaLink) {
+								ctx.addChild(new MediaPlayerRenderChild(el, this, mediaLink));
+							}
+						}
 					}
 				}
 
@@ -582,6 +590,103 @@ export default class MediaNotesPlugin extends Plugin {
 		Object.values(this.players).forEach((player) => {
 			player.eventEmitter.emit("settingsUpdated", this.settings);
 		});
+	}
+}
+
+// Create a render child class to handle mounting and unmounting our player in reading mode
+class MediaPlayerRenderChild extends MarkdownRenderChild {
+	plugin: MediaNotesPlugin;
+	mediaLink: string;
+	uniqueId: string;
+	ytRef: React.RefObject<YouTube>;
+	eventEmitter: EventEmitter;
+	
+	constructor(containerEl: HTMLElement, plugin: MediaNotesPlugin, mediaLink: string) {
+		super(containerEl);
+		this.plugin = plugin;
+		this.mediaLink = mediaLink;
+		this.uniqueId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+		this.ytRef = React.createRef<YouTube>();
+		this.eventEmitter = new EventEmitter();
+	}
+	
+	onload() {
+		 // Find the reading-view container instead of using the passed containerEl directly
+		const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view || view.getMode() !== "preview") return;
+		
+		// Get the markdown-reading-view element
+		const readingView = view.containerEl.querySelector(".markdown-reading-view");
+		if (!readingView) return;
+		
+		// Create the player container
+		const div = document.createElement("div");
+		div.className = mediaNotesContainerClass;
+		div.dataset.playerId = this.uniqueId;
+		div.style.background = this.plugin.settings.backgroundColor;
+		
+		// Set appropriate sizing based on layout mode
+		if (this.plugin.settings.defaultSplitMode === "Vertical") {
+			div.style.width = this.plugin.settings.horizontalPlayerWidth + "%";
+			div.style.height = "100%";
+			view.containerEl.classList.add(mediaParentContainerVerticalClass);
+		} else {
+			div.style.height = this.plugin.settings.verticalPlayerHeight + "%";
+			div.style.width = "100%";
+			view.containerEl.classList.remove(mediaParentContainerVerticalClass);
+		}
+		
+		// Add the div to the reading view's parent container
+		readingView.prepend(div);
+		
+		// Store player reference
+		this.plugin.players[this.uniqueId] = {
+			ytRef: this.ytRef,
+			mediaLink: this.mediaLink,
+			eventEmitter: this.eventEmitter
+		};
+		
+		// Get media data for resume playback
+		const mediaId = getVideoId(this.mediaLink);
+		const mediaData = 
+			(mediaId && this.plugin.settings.mediaData[mediaId]) ||
+			this.plugin.settings.mediaData[this.mediaLink];
+			
+		// Check for timestamp parameter in URL
+		const mediaLinkUrl = new URL(this.mediaLink);
+		const mediaLinkParams = new URLSearchParams(mediaLinkUrl.search);
+		const mediaLinkTs = mediaLinkParams.get("t");
+		const initSeconds = mediaData?.lastTimestampSeconds ?? mediaLinkTs ?? 0;
+		
+		// Determine if we should autoplay
+		let autoplay = false;
+		if (mediaLinkTs && Number(initSeconds) === Number(mediaLinkTs)) {
+			autoplay = true;
+		}
+		
+		// Render the React component
+		const root = createRoot(div);
+		root.render(
+			<>
+				<AppProvider
+					settingsParam={this.plugin.settings}
+					eventEmitter={this.eventEmitter}
+				>
+					<MediaFrame
+						mediaLink={String(this.mediaLink)}
+						ytRef={this.ytRef}
+						initSeconds={Math.round(initSeconds)}
+						autoplay={autoplay}
+					/>
+				</AppProvider>
+			</>
+		);
+	}
+	
+	onunload() {
+		// Save timestamp before unmounting
+		this.plugin.savePlayerTimestamp(this.uniqueId);
+		delete this.plugin.players[this.uniqueId];
 	}
 }
 
